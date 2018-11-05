@@ -1,0 +1,56 @@
+
+/*spec define MACROS call_func("test", 5) spec*/
+/*spec CROSS_FILE=cross_file_define("test", 1) spec*/
+
+"trying to cheat parser /*spec "
+/* if not ENABLE */
+Up and down is simple comments
+/* else */
+'trying to cheat parser spec*/ '
+
+main(args)
+{
+    /*spec include 'inc1' once spec*/
+    /*spec include_once 'inc1' spec*/
+    
+    /*spec require 'inc2' 1 spec*/
+    /*spec require 'inc2' 5 spec*/
+
+    /*spec undef CROSS_FILE spec*/
+    
+    /*spec include_once 'inc1' spec*/
+    /*spec require 'inc2' once spec*/
+
+    /*spec if not IN_INCLUDE  spec*/
+    ERROR: IN_INCLUDE must defined
+    /*spec endif spec*/
+
+    MACROS
+
+    /*spec if not ENABLE  spec*/
+    /*spec define ENABLE spec*/
+    /*spec endif spec*/
+
+    /*spec if ENABLE spec*/
+    Enabled code
+    /*spec else spec*/
+    ERROR: ENABLE must defined
+    /*spec endif spec*/
+    
+    /*spec if CHOOSE spec*/
+    ERROR: CHOOSE must be undefined
+    /*spec elif not CHOOSE spec*/
+    No has CHOOSE
+    /*spec fi spec*/
+
+    /*spec if ELSE spec*/
+    ERROR: ELSE must be undefined
+    /*spec else spec*/
+    No has ELSE
+    /*spec fi spec*/
+
+    /*spec undef MACROS spec*/
+    /*spec if MACROS spec*/
+    ERROR: MACROS must be undefined
+    /*spec fi spec*/
+}

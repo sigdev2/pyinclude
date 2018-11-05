@@ -1,0 +1,3 @@
+include lazy/*.py
+include LICENSE
+include README.rst

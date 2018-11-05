@@ -1,0 +1,4 @@
+REPEAT INCLUDE
+CROSS_FILE
+
+/*spec include 'inc2' spec*/

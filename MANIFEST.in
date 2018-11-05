@@ -1,0 +1,3 @@
+include pyinclude/*.py
+include LICENSE
+include README.rst
