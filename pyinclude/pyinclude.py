@@ -42,6 +42,7 @@ class IncludeParser:
     included = []
     macros = {}
     start_ends = set()
+    excludes = set()
     tokens = set()
     state_table = []
     strings_state = [
@@ -64,6 +65,7 @@ class IncludeParser:
         IncludeParser.included = []
         IncludeParser.macros = {}
         IncludeParser.start_ends = set()
+        IncludeParser.excludes = set()
         IncludeParser.tokens = set()
         IncludeParser.state_table = []
     clear = staticmethod(clear)
@@ -122,6 +124,7 @@ class IncludeParser:
                     IncludeParser.state_table.append([s, { r'none' : s + e }])
                     IncludeParser.state_table.append([e, { s + e : r'none' }])
             if len(excludes) > 0:
+                IncludeParser.excludes = excludes
                 for s, e in excludes:
                     IncludeParser.tokens.add(s)
                     IncludeParser.tokens.add(e)
@@ -139,8 +142,7 @@ class IncludeParser:
         parent = self
         def calculate(token):
             command = False
-            for pair in IncludeParser.start_ends:
-                s, e = pair
+            for s, e in IncludeParser.start_ends:
                 if token.startswith(s) and token.endswith(e):
                     command = token[len(s):-len(e)]
                     break
@@ -148,7 +150,14 @@ class IncludeParser:
             if command == False or len(command) <= 0:
                 if not local[r'skip']:
                     if isinstance(command, bool):
-                        local[r'out'] += IncludeParser.replaceMaros(token)
+                        finded = False
+                        for s, e in IncludeParser.excludes:
+                            if token.startswith(s) and token.endswith(e):
+                                local[r'out'] += token
+                                finded = True
+                                break
+                        if not finded:
+                            local[r'out'] += IncludeParser.replaceMaros(token)
                     elif len(command) <= 0:
                         local[r'out'] += token
                 return
