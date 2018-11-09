@@ -27,8 +27,7 @@ except ImportError:
     # Python 3
     from html.parser import HTMLParser
 import sys
-sys.path.insert(0, os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(__file__)), r'lazy_py')))
-import lazy
+from .lazy_py import lazy
 
 class SafeExecuteLocals:
     def __init__(self, **entries):
@@ -212,6 +211,19 @@ class IncludeParser:
                     return False
                 if value == None:
                     value = 1
+                else:
+                    try:
+                        env = {}
+                        env[r'locals']   = None
+                        env[r'globals']  = None
+                        env[r'__name__'] = None
+                        env[r'__file__'] = None
+                        env[r'__builtins__'] = None
+                        
+                        try_py = re.sub(IncludeParser.safe_rx, r'', value)
+                        value = eval(try_py, env, SafeExecuteLocals(**IncludeParser.macros))
+                    except:
+                        pass
                 IncludeParser.macros[macros] = value
                 return True
             elif cmd == r'undef':

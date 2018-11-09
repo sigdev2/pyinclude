@@ -2,11 +2,15 @@
 /*spec define MACROS call_func("test", 5) spec*/
 /*spec CROSS_FILE=cross_file_define("test", 1) spec*/
 
-"trying to cheat parser /*spec "
+"trying to CROSS_FILE cheat parser /*spec "
 /* if not ENABLE */
 Up and down is simple comments
 /* else */
 'trying to cheat parser spec*/ '
+
+/*spec define CALC_MACROS r'123456789'[5:-1] spec*/
+
+CALC_MACROS
 
 main(args)
 {
