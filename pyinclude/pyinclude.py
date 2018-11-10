@@ -20,6 +20,7 @@ import os
 import re
 import codecs
 import six
+import copy
 try:
     # Python 2.6-2.7 
     from HTMLParser import HTMLParser
@@ -29,13 +30,50 @@ except ImportError:
 import sys
 from .lazy_py import lazy
 
-class SafeExecuteLocals:
+class SafeLocals:
     def __init__(self, **entries):
         self.__dict__.update(entries)
     def __getitem__(self, key):
+        value = None
         if key in self.__dict__:
-            return self.__dict__[key]
-        return None
+            value = copy.copy(self.__dict__[key])
+            try:
+                env = {}
+                env[r'locals']   = None
+                env[r'globals']  = None
+                env[r'__name__'] = None
+                env[r'__file__'] = None
+                env[r'__builtins__'] = None
+                
+                try_py = re.sub(IncludeParser.safe_rx, r'', value)
+                value = eval(try_py, env, **IncludeParser.macros)
+            except:
+                if isinstance(value, str) or isinstance(value, six.string_types):
+                    value = IncludeParser.html_parser.unescape(value)
+        return value
+
+class SafeExecuteRecurseLocals:
+    def __init__(self, **entries):
+        self.__dict__.update(entries)
+    def __getitem__(self, key):
+        value = None
+        if key in self.__dict__:
+            value = copy.copy(self.__dict__[key])
+            try:
+                env = {}
+                env[r'locals']   = None
+                env[r'globals']  = None
+                env[r'__name__'] = None
+                env[r'__file__'] = None
+                env[r'__builtins__'] = None
+                
+                try_py = re.sub(IncludeParser.safe_rx, r'', value)
+                value = eval(try_py, env, SafeLocals(**IncludeParser.macros))
+            except:
+                if isinstance(value, str) or isinstance(value, six.string_types):
+                    value = IncludeParser.html_parser.unescape(value)
+                value = IncludeParser.replaceMaros(value, True)
+        return value
 
 class IncludeParser:
     included = []
@@ -69,12 +107,21 @@ class IncludeParser:
         IncludeParser.state_table = []
     clear = staticmethod(clear)
 
-    def replaceMaros(data):
-        for macros_name in IncludeParser.macros.keys():
-            value = IncludeParser.macros[macros_name]
-            if isinstance(value, str):
-                value = IncludeParser.html_parser.unescape(value)
-            data = re.sub(r'(?:^|(?<=\W))(' + macros_name + r')(?=\W|$)', str(value), data, flags=re.M or re.S)
+    def replaceMaros(data, in_recurse=False):
+        if not isinstance(data, str) or not isinstance(data, six.string_types):
+            data = str(data)
+        if len(data) > 0:
+            loc = None
+            if in_recurse:
+                loc = SafeLocals(**IncludeParser.macros)
+            else:
+                loc = SafeExecuteRecurseLocals(**IncludeParser.macros)
+            for macros_name in IncludeParser.macros.keys():
+                value = loc[macros_name]
+                if value != None:
+                    if not isinstance(value, str) or not isinstance(value, six.string_types):
+                        value = str(value)
+                    data = re.sub(r'(?:^|(?<=\W))(' + macros_name + r')(?=\W|$)', value, data, flags=re.M or re.S)
         return data
     replaceMaros = staticmethod(replaceMaros)
 
@@ -211,19 +258,6 @@ class IncludeParser:
                     return False
                 if value == None:
                     value = 1
-                else:
-                    try:
-                        env = {}
-                        env[r'locals']   = None
-                        env[r'globals']  = None
-                        env[r'__name__'] = None
-                        env[r'__file__'] = None
-                        env[r'__builtins__'] = None
-                        
-                        try_py = re.sub(IncludeParser.safe_rx, r'', value)
-                        value = eval(try_py, env, SafeExecuteLocals(**IncludeParser.macros))
-                    except:
-                        pass
                 IncludeParser.macros[macros] = value
                 return True
             elif cmd == r'undef':
@@ -290,7 +324,7 @@ class IncludeParser:
             env[r'__builtins__'] = None
             
             cmd = re.sub(IncludeParser.safe_rx, r'', cmd)
-            return bool(eval(cmd, env, SafeExecuteLocals(**IncludeParser.macros)))
+            return bool(eval(cmd, env, SafeExecuteRecurseLocals(**IncludeParser.macros)))
         except:
             print(r'Wrong if expressin')
         return False

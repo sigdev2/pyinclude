@@ -1,6 +1,6 @@
 
 /*spec define MACROS call_func("test", 5) spec*/
-/*spec CROSS_FILE=cross_file_define("test", 1) spec*/
+/*spec def CROSS_FILE=cross_file_define("test", 1) spec*/
 
 "trying to CROSS_FILE cheat parser /*spec "
 /* if not ENABLE */
@@ -11,6 +11,14 @@ Up and down is simple comments
 /*spec define CALC_MACROS r'123456789'[5:-1] spec*/
 
 CALC_MACROS
+
+/*spec define RECURSE_FOO (4 + RECURSE_FOO) spec*/
+/*spec define RECURSE_X (4 + RECURSE_Y) spec*/
+/*spec define RECURSE_Y (2 * RECURSE_X) spec*/
+
+RECURSE_FOO
+RECURSE_X
+RECURSE_Y
 
 main(args)
 {
