@@ -30,28 +30,6 @@ except ImportError:
 import sys
 from .lazy_py import lazy
 
-class SafeLocals:
-    def __init__(self, **entries):
-        self.__dict__.update(entries)
-    def __getitem__(self, key):
-        value = None
-        if key in self.__dict__:
-            value = copy.copy(self.__dict__[key])
-            try:
-                env = {}
-                env[r'locals']   = None
-                env[r'globals']  = None
-                env[r'__name__'] = None
-                env[r'__file__'] = None
-                env[r'__builtins__'] = None
-                
-                try_py = re.sub(IncludeParser.safe_rx, r'', value)
-                value = eval(try_py, env, **IncludeParser.macros)
-            except:
-                if isinstance(value, str) or isinstance(value, six.string_types):
-                    value = IncludeParser.html_parser.unescape(value)
-        return value
-
 class SafeExecuteRecurseLocals:
     def __init__(self, **entries):
         self.__dict__.update(entries)
@@ -59,6 +37,8 @@ class SafeExecuteRecurseLocals:
         value = None
         if key in self.__dict__:
             value = copy.copy(self.__dict__[key])
+            loc = SafeExecuteRecurseLocals(**self.__dict__)
+            del loc.__dict__[key]
             try:
                 env = {}
                 env[r'locals']   = None
@@ -68,11 +48,11 @@ class SafeExecuteRecurseLocals:
                 env[r'__builtins__'] = None
                 
                 try_py = re.sub(IncludeParser.safe_rx, r'', value)
-                value = eval(try_py, env, SafeLocals(**IncludeParser.macros))
+                value = eval(try_py, env, loc)
             except:
                 if isinstance(value, str) or isinstance(value, six.string_types):
                     value = IncludeParser.html_parser.unescape(value)
-                value = IncludeParser.replaceMaros(value, True)
+                value = IncludeParser.replaceMaros(value, loc)
         return value
 
 class IncludeParser:
@@ -107,21 +87,35 @@ class IncludeParser:
         IncludeParser.state_table = []
     clear = staticmethod(clear)
 
-    def replaceMaros(data, in_recurse=False):
+    def replaceMaros(data, loc=None):
         if not isinstance(data, str) or not isinstance(data, six.string_types):
             data = str(data)
         if len(data) > 0:
-            loc = None
-            if in_recurse:
-                loc = SafeLocals(**IncludeParser.macros)
-            else:
+            if loc == None:
                 loc = SafeExecuteRecurseLocals(**IncludeParser.macros)
-            for macros_name in IncludeParser.macros.keys():
-                value = loc[macros_name]
-                if value != None:
-                    if not isinstance(value, str) or not isinstance(value, six.string_types):
-                        value = str(value)
-                    data = re.sub(r'(?:^|(?<=\W))(' + macros_name + r')(?=\W|$)', value, data, flags=re.M or re.S)
+            rx = re.compile(r'(?:^|(?<=\W))(' + r'|'.join(IncludeParser.macros.keys()) + r')(?=\W|$)', flags=re.M or re.S)
+            start = 0
+            end = 0
+            out = r''
+            for m in re.finditer(rx, data):
+                end = m.start()
+                if start < end:
+                    out += data[start:end]
+                macros_name = m.group(1)
+                if macros_name != None: 
+                    value = loc[macros_name]
+                    if value == None:
+                        out += macros_name
+                    else:
+                        if not isinstance(value, str) or not isinstance(value, six.string_types):
+                            value = str(value)
+                        out += value
+
+                start = m.end()
+            if end != 0:
+                if len(data) - start > 0:
+                    out += data[start:-1]
+                data = out
         return data
     replaceMaros = staticmethod(replaceMaros)
 

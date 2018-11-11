@@ -16,9 +16,17 @@ CALC_MACROS
 /*spec define RECURSE_X (4 + RECURSE_Y) spec*/
 /*spec define RECURSE_Y (2 * RECURSE_X) spec*/
 
+/*spec define CORRECT_RECURSE_X (4 + CORRECT_RECURSE_Y) spec*/
+/*spec define CORRECT_RECURSE_Y (r'2 * ' + CORRECT_RECURSE_X) spec*/
+
 RECURSE_FOO
 RECURSE_X
 RECURSE_Y
+
+CORRECT_RECURSE_Y
+
+/*spec define __len__ 10 spec*/
+/*spec define __len__ 0 spec*/
 
 main(args)
 {
