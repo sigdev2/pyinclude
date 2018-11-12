@@ -8,6 +8,20 @@ Up and down is simple comments
 /* else */
 'trying to cheat parser spec*/ '
 
+/*spec define FUNC(i) 20 + i spec*/
+
+FUNC(5)
+
+/*spec define REC_FUNC(i) 1 + REC_FUNC(i) spec*/
+/*spec define REC_FUNC2(i) 1 + REC_FUNC(i) spec*/
+
+REC_FUNC(10)
+REC_FUNC2(10)
+
+/*spec define SUB_CALL_FUNC(i=(1,2,3)) i[0] spec*/
+
+SUB_CALL_FUNC((2,3))
+
 /*spec define CALC_MACROS r'123456789'[5:-1] spec*/
 
 CALC_MACROS
