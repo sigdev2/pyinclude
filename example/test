@@ -2,6 +2,11 @@
 /*spec define MACROS call_func("test", 5) spec*/
 /*spec def CROSS_FILE=cross_file_define("test", 1) spec*/
 
+/*spec def BACKSLASHED_MACRO:Hello \spec*/
+WORLD spec*/
+
+BACKSLASHED_MACRO
+
 "trying to CROSS_FILE cheat parser /*spec "
 /* if not ENABLE */
 Up and down is simple comments
@@ -11,6 +16,15 @@ Up and down is simple comments
 /*spec define FUNC(i) 20 + i spec*/
 
 FUNC(5)
+
+/*spec direct incriment define INCRIMENT_FUNC(i) i + spec*/
+
+/*spec incriment 10 spec*/
+INCRIMENT_FUNC(5)
+/*spec incriment 15 spec*/
+INCRIMENT_FUNC(5)
+/*spec incriment 20 spec*/
+INCRIMENT_FUNC(5)
 
 /*spec define REC_FUNC(i) 1 + REC_FUNC(i) spec*/
 /*spec define REC_FUNC2(i) 1 + REC_FUNC(i) spec*/

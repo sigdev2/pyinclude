@@ -50,6 +50,7 @@ class SafeExecuteRecurseLocals:
 class IncludeParser:
     included = []
     macros = {}
+    declaraions = {}
     start_ends = set()
     excludes = set()
     tokens = set()
@@ -59,20 +60,28 @@ class IncludeParser:
                     ['\'', { r'none' : r'onestring', r'onestring' : r'none' }]
                 ]
     commands = {
-        r'include': re.compile(r'^\s*(import|import_once|include|require|include_once|require_once)?\s+(\'[^\']+?\'|"[^"]+?")(?:\s+(once|\d+))?\s*$', re.M or re.S),
+        r'include': re.compile(r'^\s*(import|import_once|inc|include|require|include_once|require_once)?\s+(\'[^\']+?\'|"[^"]+?")(?:\s+(once|\d+))?\s*$', re.M or re.S),
         r'if': re.compile(r'^\s*if\s+([^$]*)\s*$', re.M or re.S),
-        r'elif': re.compile(r'^\s*elif\s+([^$]*)\s*$', re.M or re.S),
+        r'elif': re.compile(r'^\s*(?:elif|else\s*if)\s+([^$]*)\s*$', re.M or re.S),
         r'else': re.compile(r'^\s*else\s*$', re.M or re.S),
         r'endif': re.compile(r'^\s*endif|fi\s*$', re.M or re.S),
-        r'undef': re.compile(r'^\s*(?:del|undef|remove)\s+([A-z][A-z_0-9]*)\s*$', re.M or re.S),
-        r'define': re.compile(r'^\s*(?:def|define|declare|macro|macros)\s+([A-z][A-z_0-9]*)(?:(?:(\([^\)]+\))?\s*[\=\:]?\s*|\s*[\=\:]\s*|\s+)([^$]+))?\s*$', re.M or re.S) # must be last - is the broadest definition
+        r'undef': re.compile(r'^\s*(?:del|delete|undef|remove)\s+([A-z][A-z_0-9]*)\s*$', re.M or re.S),
+        r'define': re.compile(r'^\s*(?:def|define|macro|macros)\s+([A-z][A-z_0-9]*)(?:(?:(\([^\)]+\))?\s*[\=\:]?\s*|\s*[\=\:]\s*|\s+)([^$]+))?\s*$', re.M or re.S),
+
+        r'directive':  re.compile(r'^\s*(?:directive|direct|declare|declaration|decl)\s+([A-z][A-z_0-9]*)\s+([^$]*)\s*$', re.M or re.S)
     }
+    reserved = [r'import', r'import_once', r'inc', r'include', r'require', r'include_once', r'require_once',
+                r'if', r'elif', r'else', r'endif', r'fi',
+                r'del', r'delete', r'undef', r'remove',
+                r'def', r'define', r'macro', r'macros',
+                r'directive', r'direct', r'declare', r'declaration', r'decl']
     safe_rx = re.compile(r'eval|__[A-z]+__', re.M or re.S)
     html_parser = HTMLParser()
 
     def clear():
         IncludeParser.included = []
         IncludeParser.macros = {}
+        IncludeParser.declaraions = {}
         IncludeParser.start_ends = set()
         IncludeParser.excludes = set()
         IncludeParser.tokens = set()
@@ -217,6 +226,7 @@ class IncludeParser:
             for s, e in IncludeParser.start_ends:
                 IncludeParser.tokens.add(s)
                 IncludeParser.tokens.add(e)
+                IncludeParser.tokens.add('\\' + e)
                 if s == e:
                     IncludeParser.state_table.append([s, { r'none' : s + s, s + s : r'none' }])
                 else:
@@ -227,6 +237,8 @@ class IncludeParser:
                 for s, e in excludes:
                     IncludeParser.tokens.add(s)
                     IncludeParser.tokens.add(e)
+                    if len(e) == 1:
+                        IncludeParser.tokens.add('\\' + e)
                     if s == e:
                         IncludeParser.state_table.append([s, { r'none' : s + s, s + s : r'none' }])
                     else:
@@ -278,6 +290,12 @@ class IncludeParser:
         return local[r'out']
     
     def command(self, skip, code):
+        code = code.strip()
+        for short in IncludeParser.declaraions.keys():
+            if code.startswith(short):
+                code = code.replace(short, IncludeParser.declaraions[short], 1)
+                break
+
         for cmd in IncludeParser.commands.keys():
             if skip:
                 if cmd != r'elif' and cmd != r'else' and cmd != r'endif':
@@ -367,6 +385,21 @@ class IncludeParser:
                         return r'skip'
                     return r'unskip' if parent else r'skip'
                 return True
+            elif cmd == r'directive':
+                name, direct = ret.groups()
+                if name == None:
+                    return False
+                if name in IncludeParser.reserved:
+                    return False
+                if name in IncludeParser.declaraions and direct == None:
+                    del IncludeParser.declaraions[name]
+                    return True
+                if direct == None:
+                    return False
+
+                IncludeParser.declaraions[name] = direct
+                return True
+
             break
         return False
 
