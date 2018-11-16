@@ -21,6 +21,8 @@ import re
 import codecs
 import six
 import copy
+import keyword
+import collections
 try:
     # Python 2.6-2.7 
     from HTMLParser import HTMLParser
@@ -29,88 +31,215 @@ except ImportError:
     from html.parser import HTMLParser
 import sys
 from .lazy_py import lazy
+import sys
+try:
+    # Python 2.6-2.7
+    from StringIO import StringIO
+except ImportError:
+    # Python 3
+    from io import StringIO
+import contextlib
 
-class SafeExecuteRecurseLocals:
-    def __init__(self, **entries):
-        self.__dict__.update(entries)
+@contextlib.contextmanager
+def stdoutIO(stdout=None):
+    old = sys.stdout
+    if stdout is None:
+        stdout = StringIO()
+    sys.stdout = stdout
+    try: 
+        yield stdout
+    finally:
+        sys.stdout = old
+
+class ReadOnlyDict(collections.Mapping):
+    def __init__(self, data):
+        self._data = data
+    def __getitem__(self, key): 
+        return self._data[key]
+    def __len__(self):
+        return len(self._data)
+    def __iter__(self):
+        return iter(self._data)
+
+class ExecEnv(dict):
+    def __init__(self, var, access = {}):
+        self.env_locals = {}
+        self.var = var
+        self.consts = {
+            r'locals' : lambda: ReadOnlyDict(self.env_locals),
+            r'globals' :  lambda: ReadOnlyDict(self),
+            r'__name__' : r'<script>',
+            r'__file__' : r'<script>',
+            r'__builtins__' : access
+        }
+        super(ExecEnv, self).__init__(self.consts)
+
+    def chack_var_name(self, name):
+        if name == None:
+            return False
+        if name.startswith(r'__'):
+            return False
+        return not (name in self.consts or name in self.consts[r'__builtins__'] or name in keyword.kwlist or name in __builtins__)
+    def get_locals(self):
+        return self
+    def get_globals(self):
+        return self
+    def write_locals(self):
+        for l in self.env_locals.keys():
+            if self.chack_var_name(l) and not super(ExecEnv, self).__contains__(l):
+                value = self.env_locals[l]
+                if value != None:
+                    self.var[l] = value
+    def write_globals(self):
+        for g in super(ExecEnv, self).keys():
+            if self.chack_var_name(g):
+                value = super(ExecEnv, self).__getitem__(g)
+                if value != None:
+                    self.var[g] = value
+
+    # get locals
     def __getitem__(self, key):
-        value = None
-        if key in self.__dict__:
-            value = copy.copy(self.__dict__[key])
-            loc = SafeExecuteRecurseLocals(**self.__dict__)
-            del loc.__dict__[key]
+        if super(ExecEnv, self).__contains__(key):
+            return super(ExecEnv, self).__getitem__(key)
+        bi = self.consts[r'__builtins__']
+        if key in bi:
+            return copy.deepcopy(bi[key])
+        if key in self.env_locals:
+            return self.env_locals[key]
+        if key in self.var:
+            return copy.deepcopy(self.var[key])
+        return None
+
+    # set locals
+    def __setitem__(self, key, value):
+        self.env_locals[key] = value
+
+    # del locals
+    def __delitem__(self, key):
+        if key in self.env_locals:
+            del self.env_locals[key]
+
+    # other locals
+    def __len__(self):
+        return len(self.keys())
+    def __iter__(self):
+        return iter(self.keys())
+    def __contains__(self, key):
+        return super(ExecEnv, self).__contains__(key) or key in self.consts[r'__builtins__'] or key in self.env_locals or key in self.var
+    def keys(self):
+        return set(list(self.env_locals.keys()) + list(self.var.keys()) + list(self.consts[r'__builtins__'].keys()) + list(super(ExecEnv, self).keys()))
+
+class SafeExecuteRecurseLocals(ExecEnv):
+    def __init__(self, d, access = {}):
+        super(SafeExecuteRecurseLocals, self).__init__(d, access)
+    def __getitem__(self, key):
+        value = copy.deepcopy(super(SafeExecuteRecurseLocals, self).__getitem__(key))
+        if isinstance(value, str) or isinstance(value, six.string_types):
+            loc = SafeExecuteRecurseLocals(self.var, self.consts[r'__builtins__'])
+            loc.env_locals = copy.deepcopy(self.env_locals)
+            loc.env_locals[key] = None
             try:
                 value = IncludeParser.safe_eval(value, loc)
             except:
-                if isinstance(value, str) or isinstance(value, six.string_types):
-                    value = IncludeParser.html_parser.unescape(value)
+                value = IncludeParser.html_parser.unescape(value)
                 value = IncludeParser.replaceMaros(value, loc)
         return value
+    def keys(self):
+        return self.var.keys()
 
 class IncludeParser:
     included = []
-    macros = {}
+    access_eval = {}
+    try:
+        # Python 3
+        access_exec = {
+            r'print' : print
+        }
+    except:
+        # Python 2.6-2.7
+        access_exec = {}
+
+    standartd_macros = {}
+    macros = copy.deepcopy(standartd_macros)
     declaraions = {}
     start_ends = set()
     excludes = set()
+    excludes_tokens = set()
+    excludes_states = []
     tokens = set()
     state_table = []
-    strings_state = [
+    string_tokens = set(['\\\'', '\\\'\'\'', '\\"', '\\"""'])
+    string_states = [
                     [r'"', { r'none' : r'string', r'string' : r'none' }],
-                    ['\'', { r'none' : r'onestring', r'onestring' : r'none' }]
+                    ['\'', { r'none' : r'onestring', r'onestring' : r'none' }],
+                    ['\'\'\'', { r'none' : r'onemultistring', r'onemultistring' : r'none' }],
+                    ['"""', { r'none' : r'multistring', r'multistring' : r'none' }]
                 ]
     commands = {
-        r'include': re.compile(r'^\s*(import|import_once|inc|include|require|include_once|require_once)?\s+(\'[^\']+?\'|"[^"]+?")(?:\s+(once|\d+))?\s*$', re.M or re.S),
-        r'if': re.compile(r'^\s*if\s+([^$]*)\s*$', re.M or re.S),
-        r'elif': re.compile(r'^\s*(?:elif|else\s*if)\s+([^$]*)\s*$', re.M or re.S),
-        r'else': re.compile(r'^\s*else\s*$', re.M or re.S),
-        r'endif': re.compile(r'^\s*endif|fi\s*$', re.M or re.S),
-        r'undef': re.compile(r'^\s*(?:del|delete|undef|remove)\s+([A-z][A-z_0-9]*)\s*$', re.M or re.S),
-        r'define': re.compile(r'^\s*(?:def|define|macro|macros)\s+([A-z][A-z_0-9]*)(?:(?:(\([^\)]+\))?\s*[\=\:]?\s*|\s*[\=\:]\s*|\s+)([^$]+))?\s*$', re.M or re.S),
+        r'include': re.compile(r'^\s*(import|import_once|inc|include|require|include_once|require_once)?\s+(\'[^\']+?\'|"[^"]+?")(?:\s+(once|\d+))?\s*', re.DOTALL|re.MULTILINE),
+        r'if': re.compile(r'^\s*if\s+(.+)\s*', re.DOTALL|re.MULTILINE),
+        r'elif': re.compile(r'^\s*(?:elif|else\s*if)\s+(.+)\s*', re.DOTALL|re.MULTILINE),
+        r'else': re.compile(r'^\s*else\s*', re.DOTALL|re.MULTILINE),
+        r'endif': re.compile(r'^\s*(?:endif|fi)\s*', re.DOTALL|re.MULTILINE),
+        r'undef': re.compile(r'^\s*(?:del|delete|undef|remove)\s+([A-z][A-z_0-9]*)\s*', re.DOTALL|re.MULTILINE),
+        r'define': re.compile(r'^\s*(?:def|define|macro|macros)\s+([A-z][A-z_0-9]*)(?:(?:(\([^\)]+\))?\s*[\=\:\s]?\s*|\s*[\=\:\s]\s*)(.+))?\s*', re.DOTALL|re.MULTILINE),
 
-        r'directive':  re.compile(r'^\s*(?:directive|direct|declare|declaration|decl)\s+([A-z][A-z_0-9]*)\s+([^$]*)\s*$', re.M or re.S)
+        r'directive':  re.compile(r'^\s*(?:directive|direct|declare|declaration|decl)\s+([A-z][A-z_0-9]*)\s+(.+)\s*', re.DOTALL|re.MULTILINE),
+        r'exec': re.compile(r'^\s*(?:exec|execute)\s+(.*)\s*', re.DOTALL|re.MULTILINE)
     }
     reserved = [r'import', r'import_once', r'inc', r'include', r'require', r'include_once', r'require_once',
                 r'if', r'elif', r'else', r'endif', r'fi',
                 r'del', r'delete', r'undef', r'remove',
                 r'def', r'define', r'macro', r'macros',
-                r'directive', r'direct', r'declare', r'declaration', r'decl']
-    safe_rx = re.compile(r'eval|__[A-z]+__', re.M or re.S)
+                r'directive', r'direct', r'declare', r'declaration', r'decl',
+                r'exec', r'execute']
+    safe_rx = re.compile(r'eval|__[A-z]+__', re.DOTALL|re.MULTILINE)
     html_parser = HTMLParser()
 
     def clear():
         IncludeParser.included = []
-        IncludeParser.macros = {}
+        IncludeParser.macros = copy.deepcopy(IncludeParser.standartd_macros)
         IncludeParser.declaraions = {}
         IncludeParser.start_ends = set()
         IncludeParser.excludes = set()
+        IncludeParser.excludes_tokens = set()
+        IncludeParser.excludes_states = []
         IncludeParser.tokens = set()
         IncludeParser.state_table = []
     clear = staticmethod(clear)
 
-    def argsParse(s):
-        local = { r'count' : 0, '\'' : False, r'"' : False, '\'\'\'' : False, r'"""' : False}
-        def st(val, state):
-            if val == '\'' and not (local[r'"'] or local['\'\'\''] or local[r'"""']):
-                local[val] = not local[val]
-            if val == r'"' and not (local['\''] or local['\'\'\''] or local[r'"""']):
-                local[val] = not local[val]
-            if val == '\'\'\'' and not (local[r'"'] or local['\''] or local[r'"""']):
-                local[val] = not local[val]
-            if val == r'"""' and not (local[r'"'] or local['\''] or local['\'\'\'']):
-                local[val] = not local[val]
-
-            if val == r'(':
-                local[r'count'] += 1
-                if state == r'none':
-                    return r'in_args'
-            elif val == r')':
-                local[r'count'] -= 1
-                if state == r'in_args' and local[r'count'] == 0:
+    def bracketParse(s, tokens, states, start = True, reduce = True):
+        local = { r'count' : 0, r'st_func' : lazy.lazy_stateTable(states) }
+        def args(val, state):
+            state = local[r'st_func'](val, state)
+            if state == r'none':
+                if start:
+                    if val == r'(':
+                        local[r'count'] += 1
+                        return r'in_args'
+            elif state == r'in_args':
+                if val == r'(':
+                    local[r'count'] += 1
+                elif val == r')':
+                    local[r'count'] -= 1
+                if local[r'count'] == 0:
                     return r'none'
             return state
-        return lazy.lazy(s).group(st, lambda a, v, s: a + v, r'').reduce(lambda x, y : x + [y], [])
+            
+        stateParse = lazy.lazy(lazy.lazy_tokenize(s, tokens))
+        stateParse.group(args, lambda a, v, s : a + v, '')
+        if reduce:
+            return stateParse.reduce(lambda x, y : x + [y], [])
+        return stateParse
+    bracketParse = staticmethod(bracketParse)
+
+    def argsParse(s):
+        return IncludeParser.bracketParse(s, IncludeParser.string_tokens, IncludeParser.string_states)
     argsParse = staticmethod(argsParse)
+
+    def createSafeEnv():
+        return SafeExecuteRecurseLocals(IncludeParser.macros, IncludeParser.access_eval)
+    createSafeEnv = staticmethod(createSafeEnv)
 
     def toString(obj):
         if isinstance(obj, str) or isinstance(obj, six.string_types):
@@ -118,23 +247,24 @@ class IncludeParser:
         return str(obj)
     toString = staticmethod(toString)
 
+    def no_safe_exec(cmd):
+        code = compile(cmd, r'<script>', r'exec')
+        env = ExecEnv(IncludeParser.macros, IncludeParser.access_exec)
+        exec(code, env.get_globals(), env.get_locals())
+        env.write_globals()
+    no_safe_exec = staticmethod(no_safe_exec)
+
     def safe_eval(cmd, loc = None):
         if loc == None:
-            loc = SafeExecuteRecurseLocals(**IncludeParser.macros)
-        env = {}
-        env[r'locals']   = None
-        env[r'globals']  = None
-        env[r'__name__'] = None
-        env[r'__file__'] = None
-        env[r'__builtins__'] = None
-
+            loc = IncludeParser.createSafeEnv()
         cmd = re.sub(IncludeParser.safe_rx, r'', cmd)
-        return eval(cmd, env, loc)
+        code = compile(cmd, r'<script>', r'eval')
+        return eval(code, loc.get_globals(), loc.get_locals())
     safe_eval = staticmethod(safe_eval)
 
     def safe_bool_eval(cmd, loc = None):
         if loc == None:
-            loc = SafeExecuteRecurseLocals(**IncludeParser.macros)
+            loc = IncludeParser.createSafeEnv()
         try:
             return bool(IncludeParser.safe_eval(cmd, loc))
         except:
@@ -144,61 +274,88 @@ class IncludeParser:
 
     def replaceMaros(data, loc=None):
         data = IncludeParser.toString(data)
-        if len(data) > 0:
-            if loc == None:
-                loc = SafeExecuteRecurseLocals(**IncludeParser.macros)
-            rx = re.compile(r'(?:^|(?<=\W))(' + r'|'.join(loc.__dict__.keys()) + r')(?=\W|$)(\([^\)]+\))?', flags=re.M or re.S)
-            start = 0
-            end = 0
-            out = r''
-            for m in re.finditer(rx, data):
-                end = m.start()
-                if start < end:
-                    out += m.string[start:end]
-                macros_name, args = m.groups()
-                if macros_name != None: 
-                    value = loc[macros_name]
-                    if value == None:
-                        out += m.string[m.start():m.end()]
-                    else:
-                        if not isinstance(value, str) and not isinstance(value, six.string_types):
-                            if callable(value):
-                                if args == None:
-                                    value = IncludeParser.macros[macros_name]
-                                else:
-                                    part = m.string[m.start():]
-                                    parsed = IncludeParser.argsParse(part)
-                                    try:
-                                        value = IncludeParser.toString(IncludeParser.safe_eval(macros_name + parsed[1], loc))
-                                        out += value
-                                        start = m.start() + len(parsed[0]) + len(parsed[1])
-                                        continue
-                                    except:
-                                        value = m.string[m.start():m.end()]
-                            else:
-                                value = str(value)
-                        out += value
+        if len(data) <= 0:
+            return data
+        if len(data.strip()) <= 0:
+            return data
 
-                start = m.end()
-            if end != 0:
-                if len(data) - start > 0:
-                    out += data[start:-1]
-                data = out
-        return data
+        if loc == None:
+            loc = IncludeParser.createSafeEnv()
+        keys = loc.keys()
+
+        tokens = copy.deepcopy(IncludeParser.excludes_tokens)
+        tokens.update(IncludeParser.string_tokens)
+        tokens.update([x + r'(' for x in keys])
+
+        states = copy.deepcopy(IncludeParser.excludes_states)
+        states += IncludeParser.string_states
+        states += [[x + r'(', { r'none' : r'in_args' }] for x in keys]
+
+        rx = re.compile(r'(?:^|(?<=\W))(' + r'|'.join(keys) + r')(?=\W|$)', re.DOTALL|re.MULTILINE)
+        data = IncludeParser.bracketParse(data, IncludeParser.excludes_tokens, IncludeParser.excludes_states, False, True)
+        out = r''
+        for part in data:
+            bIsFunctional = False
+            for fmacro in keys:
+                if part.startswith(fmacro + r'('):
+                    value = loc[fmacro]
+                    if callable(value):
+                        try:
+                            out += IncludeParser.toString(IncludeParser.safe_eval(part, loc))
+                        except:
+                            out += part
+                    else:
+                        out += IncludeParser.toString(value) + IncludeParser.replaceMaros(part[len(fmacro):])
+                    bIsFunctional = True
+                    break
+            bIsExclude = False
+            for s, e in IncludeParser.excludes:
+                if part.startswith(s) and part.endswith(e):
+                    bIsExclude = True
+                    out += part
+                    break
+            if not bIsFunctional and not bIsExclude:
+                start = 0
+                end = 0
+                for m in re.finditer(rx, part):
+                    end = m.start()
+                    if start < end:
+                        out += m.string[start:end]
+                    macros_name = m.group(1)
+                    if macros_name != None:
+                        value = loc[macros_name]
+                        if value == None or callable(value):
+                            out += m.string[m.start():m.end()]
+                        else:
+                            out += IncludeParser.toString(value)
+                    start = m.end()
+                if end != 0:
+                    if len(part) - start > 0:
+                        out += part[start:]
+                if end == 0:
+                    out = data
+        return out
     replaceMaros = staticmethod(replaceMaros)
 
     def concat_strings(accum, v):
-        if (v.startswith('\'') and v.endswith('\'')) or (v.startswith(r'"') and v.endswith(r'"')):
-            return accum + v[1:-1]
-        else:
-            return accum + v
+        for token in IncludeParser.string_tokens:
+            if v.startswith(token) and v.endswith(token):
+                tlen = len(token)
+                return accum + v[tlen:-tlen]
+
         v = v.split(r'.')
         for part in v:
             if part in IncludeParser.macros:
                 val = IncludeParser.macros[part]
-                if (val.startswith('\'') and val.endswith('\'')) or (val.startswith(r'"') and val.endswith(r'"')):
-                    accum += val[1:-1]
-                else:
+                if not isinstance(val, str) and not isinstance(val, six.string_types):
+                    continue
+                bFind = False
+                for token in IncludeParser.string_tokens:
+                    if v.startswith(token) and v.endswith(token):
+                        tlen = len(token)
+                        accum += val[tlen:-tlen]
+                        bFind = True
+                if bFind == False:
                     accum += val
             else:
                 accum += part
@@ -220,12 +377,20 @@ class IncludeParser:
         self.encoding = encoding
 
         if len(macro_vars) > 0:
-            IncludeParser.macros.update(macro_vars)
+            for m in macro_vars:
+                env = ExecEnv(IncludeParser.macros)
+                if not env.chack_var_name(m):
+                    continue
+                value = macro_vars[m]
+                if value == None:
+                    value = 1
+                IncludeParser.macros[m] = value
         if len(IncludeParser.start_ends) <= 0 and len(start_ends) > 0:
             IncludeParser.start_ends = start_ends
             for s, e in IncludeParser.start_ends:
                 IncludeParser.tokens.add(s)
                 IncludeParser.tokens.add(e)
+                IncludeParser.tokens.add('\\' + s)
                 IncludeParser.tokens.add('\\' + e)
                 if s == e:
                     IncludeParser.state_table.append([s, { r'none' : s + s, s + s : r'none' }])
@@ -237,40 +402,47 @@ class IncludeParser:
                 for s, e in excludes:
                     IncludeParser.tokens.add(s)
                     IncludeParser.tokens.add(e)
+                    IncludeParser.excludes_tokens.add(s)
+                    IncludeParser.excludes_tokens.add(e)
+                    if len(s) == 1:
+                        IncludeParser.tokens.add('\\' + s)
+                        IncludeParser.excludes_tokens.add('\\' + s)
                     if len(e) == 1:
                         IncludeParser.tokens.add('\\' + e)
+                        IncludeParser.excludes_tokens.add('\\' + e)
                     if s == e:
                         IncludeParser.state_table.append([s, { r'none' : s + s, s + s : r'none' }])
+                        IncludeParser.excludes_states.append([s, { r'none' : s + s, s + s : r'none' }])
                     else:
                         IncludeParser.state_table.append([s, { r'none' : s + e }])
                         IncludeParser.state_table.append([e, { s + e : r'none' }])
+                        IncludeParser.excludes_states.append([s, { r'none' : s + e }])
+                        IncludeParser.excludes_states.append([e, { s + e : r'none' }])
     
     def parse(self, data):
         stateParse = lazy.lazy(lazy.lazy_tokenize(data, IncludeParser.tokens))
         stateParse.group(lazy.lazy_stateTable(IncludeParser.state_table), lambda a, v, s : a + v, '')
 
-        local = { r'out' : r'', r'skip' : False }
+        local = { r'out' : r'', r'skip' : False, r'tokens' : r'' }
         parent = self
         def calculate(token):
             command = False
-            for s, e in IncludeParser.start_ends:
-                if token.startswith(s) and token.endswith(e):
-                    command = token[len(s):-len(e)]
-                    break
+            if token != False:
+                for s, e in IncludeParser.start_ends:
+                    if token.startswith(s) and token.endswith(e):
+                        command = token[len(s):-len(e)]
+                        if len(command) < 1:
+                            command = False
+                        break
             
-            if command == False or len(command) <= 0:
+            if command != False or token == False:
+                local[r'out'] += IncludeParser.replaceMaros(local[r'tokens'])
+                local[r'tokens'] = r''
+                if command == False:
+                    return
+            else:
                 if not local[r'skip']:
-                    if isinstance(command, bool):
-                        finded = False
-                        for s, e in IncludeParser.excludes:
-                            if token.startswith(s) and token.endswith(e):
-                                local[r'out'] += token
-                                finded = True
-                                break
-                        if not finded:
-                            local[r'out'] += IncludeParser.replaceMaros(token)
-                    elif len(command) <= 0:
-                        local[r'out'] += token
+                    local[r'tokens'] += token
                 return
 
             ret = parent.command(local[r'skip'], command)
@@ -285,9 +457,18 @@ class IncludeParser:
                     local[r'out'] += ret
                 elif ret == False:
                     local[r'out'] += token
-        
         stateParse.value(calculate)
+        calculate(False)
         return local[r'out']
+    
+    def pathParser(self, path):
+        stateParse = lazy.lazy(lazy.lazy_tokenize(path, IncludeParser.string_tokens))
+        stateParse.group(lazy.lazy_stateTable(IncludeParser.string_states), lambda a, v, s : a + v, '')
+        path = stateParse.reduce(lambda x, y : IncludeParser.concat_strings(x, y), r'')
+        path = self.convertPath(path)
+        if not os.path.isabs(path):
+            path = os.path.join(self.root, path)
+        return path
     
     def command(self, skip, code):
         code = code.strip()
@@ -301,8 +482,8 @@ class IncludeParser:
                 if cmd != r'elif' and cmd != r'else' and cmd != r'endif':
                     continue
             
-            ret = IncludeParser.commands[cmd].search(code)
-            if ret == None:
+            ret = IncludeParser.commands[cmd].match(code)
+            if ret == None or ret.start() != 0:
                 continue
             
             if cmd == r'include':
@@ -313,10 +494,7 @@ class IncludeParser:
                     count = 1
                 if full_path == None:
                     return False
-                path = lazy.lazy(full_path).group(lazy.lazy_stateTable(IncludeParser.strings_state), lambda a, v, s : a + v, r'').reduce(lambda x, y : IncludeParser.concat_strings(x, y), r'')
-                
-                if not os.path.isabs(path):
-                    path = os.path.join(self.root, path)
+                path = self.pathParser(full_path)
 
                 out = r''
                 names = glob.glob(path)
@@ -325,7 +503,8 @@ class IncludeParser:
                 return out
             elif cmd == r'define':
                 macros, args, value = ret.groups()
-                if macros == None:
+                env = ExecEnv(IncludeParser.macros)
+                if not env.chack_var_name(macros):
                     return False
                 if value == None:
                     value = 1
@@ -398,6 +577,28 @@ class IncludeParser:
                     return False
 
                 IncludeParser.declaraions[name] = direct
+                return True
+            elif cmd == r'exec':
+                source = ret.group(1)
+                if source == None:
+                    return False
+                
+                if len(source) > 0:
+                    try:
+                        with stdoutIO() as s:
+                            IncludeParser.no_safe_exec(source)
+                        return s.getvalue()
+                    except:
+                        path = self.pathParser(source)
+                        if not os.path.exists(path):
+                            return False    
+                        try:
+                            with stdoutIO() as s:
+                                with codecs.open(path, r'r', self.encoding) as f:
+                                    IncludeParser.no_safe_exec( f.read())
+                            return s.getvalue()
+                        except:
+                            return False
                 return True
 
             break

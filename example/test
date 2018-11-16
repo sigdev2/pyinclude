@@ -17,6 +17,20 @@ Up and down is simple comments
 
 FUNC(5)
 
+/*spec define LAMBDA_FUNC (lambda i : 20 + i) spec*/
+
+LAMBDA_FUNC(5)
+
+/*spec exec global multilineFunc
+def multilineFunc(v):
+    return v + r' World'
+def localFunc(v):
+    return v
+print(multilineFunc(r'Hello '))
+spec*/
+
+multilineFunc('Other ')
+
 /*spec direct incriment define INCRIMENT_FUNC(i) i + spec*/
 
 /*spec incriment 10 spec*/
