@@ -292,9 +292,12 @@ class IncludeParser:
         states += [[x + r'(', { r'none' : r'in_args' }] for x in keys]
 
         rx = re.compile(r'(?:^|(?<=\W))(' + r'|'.join(keys) + r')(?=\W|$)', re.DOTALL|re.MULTILINE)
-        data = IncludeParser.bracketParse(data, IncludeParser.excludes_tokens, IncludeParser.excludes_states, False, True)
+        data = IncludeParser.bracketParse(data, tokens, states, False, True)
         out = r''
         for part in data:
+            if len(part.strip()) <= 0:
+                out += part
+                continue
             bIsFunctional = False
             for fmacro in keys:
                 if part.startswith(fmacro + r'('):
@@ -333,7 +336,7 @@ class IncludeParser:
                     if len(part) - start > 0:
                         out += part[start:]
                 if end == 0:
-                    out = data
+                    out += part
         return out
     replaceMaros = staticmethod(replaceMaros)
 
@@ -420,7 +423,8 @@ class IncludeParser:
                         IncludeParser.excludes_states.append([e, { s + e : r'none' }])
     
     def parse(self, data):
-        stateParse = lazy.lazy(lazy.lazy_tokenize(data, IncludeParser.tokens))
+        tokenized = lazy.lazy_tokenize(data, IncludeParser.tokens)
+        stateParse = lazy.lazy(tokenized)
         stateParse.group(lazy.lazy_stateTable(IncludeParser.state_table), lambda a, v, s : a + v, '')
 
         local = { r'out' : r'', r'skip' : False, r'tokens' : r'' }

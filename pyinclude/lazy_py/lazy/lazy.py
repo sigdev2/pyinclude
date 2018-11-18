@@ -18,6 +18,9 @@ r''' Copyright 2018, SigDev
 from copy import copy, deepcopy
 import re
 
+global cmp
+cmp = (lambda(x, y): (x > y) - (x < y))
+
 class Command:
     t = 0
     f = None
@@ -239,31 +242,28 @@ def lazy_stateTable(table):
 
 def lazy_stringStates(tokens):
     d = {}
-    states = set()
-    substates = set()
-    for s in tokens:
-        if s in states:
-            continue
-        states.add(s)
-        
+    for token in tokens:
         sub_state = r''
         old_state = r'none'
-        for ch in s:
+        for ch in token:
             sub_state += ch
+            if ch == token[-1]:
+                sub_state = r'none'
             if ch in d:
                 d[ch][old_state] = sub_state
             else:
                 d[ch] = {old_state : sub_state}
-            substates.add(sub_state)
+            old_state = sub_state
 
-        for ss in substates:
-            if r'/.*/' in d:
-                d[r'/.*/'][ss] = r'none'
-            else:
-                d[r'/.*/'] = {ss : r'none'}
+    for ss in tokens:
+        if r'/.*/' in d:
+            d[r'/.*/'][ss] = r'none'
+        else:
+            d[r'/.*/'] = {ss : r'none'}
     
     keys = list(d.keys())
     keys.remove(r'/.*/')
+    keys.sort(lambda x,y: cmp(len(x), len(y)))
     keys.append(r'/.*/')
     ret = []
     for k in keys:
