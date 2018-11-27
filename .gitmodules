@@ -1,3 +1,0 @@
-[submodule "pyinclude/lazy_py"]
-	path = pyinclude/lazy_py
-	url = https://github.com/sigdev2/lazy_py
