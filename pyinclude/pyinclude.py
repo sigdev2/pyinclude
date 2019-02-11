@@ -31,7 +31,6 @@ except ImportError:
     from html.parser import HTMLParser
 import sys
 from .lazy_py import lazy
-import sys
 try:
     # Python 2.6-2.7
     from StringIO import StringIO
